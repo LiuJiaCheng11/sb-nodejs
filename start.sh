@@ -142,21 +142,27 @@ fi
 # ================== 生成订阅 ==================
 generate_sub() {
     local argo_domain="$1"
+    # 清空旧文件
     > "${FILE_PATH}/list.txt"
     
-    # TUIC (UDP)
+    # 1. TUIC (UDP)
     [ -n "$TUIC_PORT" ] && echo "tuic://${UUID}:admin@${PUBLIC_IP}:${TUIC_PORT}?sni=www.bing.com&alpn=h3&congestion_control=bbr&allowInsecure=1#TUIC-${ISP}" >> "${FILE_PATH}/list.txt"
     
-    # HY2 (UDP)
+    # 2. HY2 (UDP)
     [ -n "$HY2_PORT" ] && echo "hysteria2://${UUID}@${PUBLIC_IP}:${HY2_PORT}/?sni=www.bing.com&insecure=1#Hysteria2-${ISP}" >> "${FILE_PATH}/list.txt"
     
-    # Reality (TCP)
+    # 3. Reality (TCP)
     [ -n "$REALITY_PORT" ] && echo "vless://${UUID}@${PUBLIC_IP}:${REALITY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${public_key}&type=tcp#Reality-${ISP}" >> "${FILE_PATH}/list.txt"
     
-    # Argo VLESS
+    # 4. Argo VLESS
     [ -n "$argo_domain" ] && echo "vless://${UUID}@${BEST_CF_DOMAIN}:443?encryption=none&security=tls&sni=${argo_domain}&type=ws&host=${argo_domain}&path=%2F${UUID}-vless#Argo-${ISP}" >> "${FILE_PATH}/list.txt"
 
-    cat "${FILE_PATH}/list.txt" > "${FILE_PATH}/sub.txt"
+    # --- 内容转为 Base64 ---
+    if command -v base64 >/dev/null 2>&1; then
+        base64 -w 0 "${FILE_PATH}/list.txt" > "${FILE_PATH}/sub.txt"
+    else
+        node -e "console.log(require('fs').readFileSync('${FILE_PATH}/list.txt').toString('base64'))" > "${FILE_PATH}/sub.txt"
+    fi
 }
 
 # ================== HTTP 服务器脚本 ==================
@@ -166,11 +172,20 @@ const fs = require('fs');
 const port = process.argv[2] || 8080;
 const bind = process.argv[3] || '0.0.0.0';
 http.createServer((req, res) => {
-    if (req.url.includes('/sub') || req.url.includes('/${UUID}')) {
+    // 只有路径完全等于 /UUID 时才返回内容
+    if (req.url === '/${UUID}') {
         res.writeHead(200, {'Content-Type': 'text/plain; charset=utf-8'});
-        try { res.end(fs.readFileSync('${FILE_PATH}/sub.txt', 'utf8')); } catch(e) { res.end('error'); }
-    } else { res.writeHead(404); res.end('404'); }
-}).listen(port, bind, () => console.log('HTTP on ' + bind + ':' + port));
+        try { 
+            res.end(fs.readFileSync('${FILE_PATH}/sub.txt', 'utf8')); 
+        } catch(e) { 
+            res.end('File not found'); 
+        }
+    } else {
+        // 其他路径全部 404，不给任何提示
+        res.writeHead(404);
+        res.end();
+    }
+}).listen(port, bind, () => console.log('HTTP service started'));
 JSEOF
 
 # ================== 启动 HTTP 订阅服务 ==================
@@ -297,7 +312,7 @@ done
 generate_sub "$ARGO_DOMAIN"
 
 # ================== 确定订阅链接 ==================
-SUB_URL="http://${PUBLIC_IP}:${HTTP_PORT}/sub"
+SUB_URL="http://${PUBLIC_IP}:${HTTP_PORT}/${UUID}"
 
 # ================== 输出结果 ==================
 echo ""
